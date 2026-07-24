@@ -1,7 +1,8 @@
-name: Build Android APK from AI Studio
+name: Build Android APK (Static Web App)
+
 on:
   push:
-    branches: [ main ] # Cambia a master si tu rama principal se llama así
+    branches: [ main ]
 
 jobs:
   build:
@@ -10,35 +11,40 @@ jobs:
     - name: Checkout Source
       uses: actions/checkout@v4
 
-    - name: Find Project Directory
-      id: find-dir
-      run: |
-        # Busca dónde está el archivo package.json en el repositorio
-        PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-        if [ -z "$PKG_PATH" ]; then
-          echo "ERROR: No se encontró package.json en ningún lado."
-          exit 1
-        fi
-        # Extrae la ruta de la carpeta
-        SUB_DIR=$(dirname "$PKG_PATH" | sed 's|^\./||')
-        if [ "$SUB_DIR" = "." ]; then SUB_DIR=""; fi
-        echo "SUB_DIR=$SUB_DIR" >> $GITHUB_ENV
-        echo "Proyecto encontrado en la carpeta: /$SUB_DIR"
+    - name: Debug - List Files
+      run: find . -maxdepth 3 -not -path '*/.git/*' | sort
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: 18
 
-    - name: Install Dependencies
+    - name: Install Capacitor
       run: |
-        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
-        npm install
+        npm init -y
+        npm install @capacitor/core @capacitor/cli @capacitor/android
 
-    - name: Build Web App
+    - name: Create Web Dist Directory
       run: |
-        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
-        npm run build --if-present
+        # Copia todos los archivos web a una carpeta "dist"
+        mkdir -p dist
+        # Copia todo excepto .git y node_modules
+        find . -maxdepth 1 \
+          -not -name '.' \
+          -not -name '.git' \
+          -not -name 'node_modules' \
+          -not -name 'dist' \
+          -not -name 'package.json' \
+          -not -name 'package-lock.json' \
+          | while read item; do
+            cp -r "$item" dist/
+          done
+
+    - name: Initialize Capacitor and Sync
+      run: |
+        npx cap init "FinanzasInteligentes" "com.finanzas.inteligentes" --web-dir=dist
+        npx cap add android
+        npx cap sync android
 
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -49,27 +55,13 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Configure and Sync Capacitor
+    - name: Build APK (Debug)
       run: |
-        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
-        npm install @capacitor/core @capacitor/cli @capacitor/android
-        
-        # Determina si la carpeta de salida es dist o build
-        WEB_DIR="dist"
-        if [ -d "build" ]; then WEB_DIR="build"; fi
-        
-        npx cap init "FinanzasInteligentes" "com.finanzas.inteligentes" --web-dir=$WEB_DIR --skip-appid-validation
-        npx cap add android
-        npx cap sync android
-
-    - name: Build APK (Debug Mode)
-      run: |
-        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
-        cd android && ./gradlew assembleDebug
+        cd android
+        ./gradlew assembleDebug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-debug-apk
-        path: |
-          **/android/app/build/outputs/apk/debug/app-debug.apk
+        path: android/app/build/outputs/apk/debug/app-debug.apk
