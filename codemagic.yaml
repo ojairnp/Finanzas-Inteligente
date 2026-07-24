@@ -1,0 +1,35 @@
+workflows:
+  html-to-apk:
+    name: Compilar APK desde HTML
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      android_signing:
+        - name: default_keystore
+      vars:
+        PACKAGE_NAME: "com.mi_proyecto.stitch"
+        APP_NAME: "Mi App Stitch"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: '*'
+          include: true
+    scripts:
+      - name: Instalar herramientas de empaquetado
+        script: | 
+          npm install -g @capacitor/core @capacitor/cli
+          npm install
+      - name: Inicializar Capacitor
+        script: |
+          npx cap init "$APP_NAME" "$PACKAGE_NAME" --web-dir=.
+          npx cap add android
+      - name: Sincronizar archivos web
+        script: |
+          npx cap sync android
+      - name: Compilar APK de Android
+        script: |
+          cd android
+          ./gradlew assembleDebug
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
