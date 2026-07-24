@@ -1,0 +1,6 @@
+{
+  "name": "FinanzaInteligente",
+  "description": "Aplicación de finanzas personales con registro automatizado de gastos, estrategia de crédito de 50 días, gestión de inversiones y análisis patrimonial con IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
