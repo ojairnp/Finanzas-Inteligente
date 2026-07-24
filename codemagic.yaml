@@ -5,8 +5,8 @@ workflows:
     instance_type: mac_mini_m1
     environment:
       vars:
-        PACKAGE_NAME: "https://stitch.withgoogle.com/projects/17305166620186457298"
-        APP_NAME: "MSmart Personal Finance Hub"
+        PACKAGE_NAME: "com.mystitchapp.project"
+        APP_NAME: "MiAppStitch"
     triggering:
       events:
         - push
@@ -22,8 +22,8 @@ workflows:
           npm run build --if-present
       - name: Configurar e instalar Capacitor
         script: |
-          npm install @capacitor/core @capacitor/cli
-          npx cap init "$APP_NAME" "$PACKAGE_NAME" --web-dir=dist
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap init "$APP_NAME" "$PACKAGE_NAME" --web-dir=dist --skip-appid-validation
           npx cap add android
       - name: Sincronizar código con Android
         script: |
