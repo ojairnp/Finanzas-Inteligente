@@ -1,14 +1,12 @@
 workflows:
-  html-to-apk:
-    name: Compilar APK desde HTML
+  ai-studio-to-apk:
+    name: Compilar APK desde AI Studio
     max_build_duration: 30
     instance_type: mac_mini_m1
     environment:
-      android_signing:
-        - name: default_keystore
       vars:
-        PACKAGE_NAME: "com.mi_proyecto.stitch"
-        APP_NAME: "Mi App Stitch"
+        PACKAGE_NAME: "https://stitch.withgoogle.com/projects/17305166620186457298"
+        APP_NAME: "MSmart Personal Finance Hub"
     triggering:
       events:
         - push
@@ -16,18 +14,21 @@ workflows:
         - pattern: '*'
           include: true
     scripts:
-      - name: Instalar herramientas de empaquetado
+      - name: Instalar dependencias del proyecto
         script: | 
-          npm install -g @capacitor/core @capacitor/cli
           npm install
-      - name: Inicializar Capacitor
+      - name: Generar la versión de producción (Build)
         script: |
-          npx cap init "$APP_NAME" "$PACKAGE_NAME" --web-dir=.
+          npm run build --if-present
+      - name: Configurar e instalar Capacitor
+        script: |
+          npm install @capacitor/core @capacitor/cli
+          npx cap init "$APP_NAME" "$PACKAGE_NAME" --web-dir=dist
           npx cap add android
-      - name: Sincronizar archivos web
+      - name: Sincronizar código con Android
         script: |
           npx cap sync android
-      - name: Compilar APK de Android
+      - name: Compilar APK de Android (Modo Debug)
         script: |
           cd android
           ./gradlew assembleDebug
