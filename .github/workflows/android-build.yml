@@ -10,16 +10,35 @@ jobs:
     - name: Checkout Source
       uses: actions/checkout@v4
 
+    - name: Find Project Directory
+      id: find-dir
+      run: |
+        # Busca dónde está el archivo package.json en el repositorio
+        PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+        if [ -z "$PKG_PATH" ]; then
+          echo "ERROR: No se encontró package.json en ningún lado."
+          exit 1
+        fi
+        # Extrae la ruta de la carpeta
+        SUB_DIR=$(dirname "$PKG_PATH" | sed 's|^\./||')
+        if [ "$SUB_DIR" = "." ]; then SUB_DIR=""; fi
+        echo "SUB_DIR=$SUB_DIR" >> $GITHUB_ENV
+        echo "Proyecto encontrado en la carpeta: /$SUB_DIR"
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: 18
 
     - name: Install Dependencies
-      run: npm install
+      run: |
+        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
+        npm install
 
-    - name: Build Web App (Vite/React)
-      run: npm run build --if-present
+    - name: Build Web App
+      run: |
+        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
+        npm run build --if-present
 
     - name: Setup Java
       uses: actions/setup-java@v4
@@ -32,16 +51,25 @@ jobs:
 
     - name: Configure and Sync Capacitor
       run: |
+        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
         npm install @capacitor/core @capacitor/cli @capacitor/android
-        npx cap init "MiAppStitch" "com.mystitchapp.project" --web-dir=dist --skip-appid-validation
+        
+        # Determina si la carpeta de salida es dist o build
+        WEB_DIR="dist"
+        if [ -d "build" ]; then WEB_DIR="build"; fi
+        
+        npx cap init "FinanzasInteligentes" "com.finanzas.inteligentes" --web-dir=$WEB_DIR --skip-appid-validation
         npx cap add android
         npx cap sync android
 
     - name: Build APK (Debug Mode)
-      run: cd android && ./gradlew assembleDebug
+      run: |
+        if [ -n "$SUB_DIR" ]; then cd "$SUB_DIR"; fi
+        cd android && ./gradlew assembleDebug
 
-    - name: Upload APK Artifact (Updated v4)
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-debug-apk
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+        path: |
+          **/android/app/build/outputs/apk/debug/app-debug.apk
