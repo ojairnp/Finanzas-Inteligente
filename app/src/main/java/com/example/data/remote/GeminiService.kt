@@ -3,6 +3,10 @@ package com.example.data.remote
 import android.graphics.Bitmap
 import android.util.Base64
 import com.example.BuildConfig
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
@@ -115,42 +119,74 @@ class GeminiService {
     }
 
     suspend fun parseTicketOcr(bitmap: Bitmap): ParsedExpense = withContext(Dispatchers.IO) {
+        // 1. Perform local ML Kit Text Recognition on the captured photo
+        val ocrResult = com.example.util.ReceiptOcrProcessor.processReceiptImage(bitmap)
+
         val apiKey = getApiKey()
-        if (apiKey == "PLACEHOLDER_KEY") {
-            return@withContext ParsedExpense(amount = 890.50, merchant = "Supermercado Express", category = "Supermercado", note = "Escaneo OCR de Ticket")
-        }
+        if (apiKey != "PLACEHOLDER_KEY") {
+            try {
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                val base64Image = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
 
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-        val base64Image = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                val prompt = """
+                    Analyze this purchase receipt image or extracted text: "${ocrResult.fullRawText}".
+                    Return ONLY a raw JSON object with keys:
+                    "amount": total double amount,
+                    "merchant": store/business name,
+                    "category": "Supermercado", "Restaurantes", "Gasolina", "Servicios", or "Otros",
+                    "note": brief description,
+                    "dateText": "date string",
+                    "placeOrAddress": "store location or address"
+                    Do not include markdown.
+                """.trimIndent()
 
-        val prompt = """
-            Analyze this purchase receipt image.
-            Return ONLY a raw JSON object with keys:
-            "amount": total double amount,
-            "merchant": store/business name,
-            "category": "Supermercado", "Restaurantes", "Gasolina", or "Servicios",
-            "note": brief description.
-            Do not include markdown.
-        """.trimIndent()
-
-        try {
-            val req = GeminiRequest(
-                contents = listOf(
-                    Content(
-                        parts = listOf(
-                            Part(text = prompt),
-                            Part(inlineData = InlineData(mimeType = "image/jpeg", data = base64Image))
+                val req = GeminiRequest(
+                    contents = listOf(
+                        Content(
+                            parts = listOf(
+                                Part(text = prompt),
+                                Part(inlineData = InlineData(mimeType = "image/jpeg", data = base64Image))
+                            )
                         )
                     )
                 )
+                val resp = GeminiClient.api.generateContent(apiKey, req)
+                val rawText = resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+                val cleanJson = rawText.replace("```json", "").replace("```", "").trim()
+                if (cleanJson.contains("amount")) {
+                    val parsed = parseJsonToExpense(cleanJson, "Ticket OCR: ${ocrResult.fullRawText}")
+                    if (parsed.amount > 0.0) {
+                        return@withContext parsed.copy(
+                            dateText = parsed.dateText.ifEmpty { ocrResult.dateText },
+                            placeOrAddress = parsed.placeOrAddress.ifEmpty { ocrResult.placeOrAddress }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // fall back to ML Kit local OCR parsing
+            }
+        }
+
+        // 2. Real offline ML Kit OCR Parsing (No fake static numbers!)
+        if (ocrResult.fullRawText.isNotBlank()) {
+            ParsedExpense(
+                amount = ocrResult.amount,
+                merchant = ocrResult.merchant,
+                category = ocrResult.category,
+                note = "ML Kit OCR: ${ocrResult.detectedItems.take(2).joinToString(" | ").ifEmpty { "Lectura automática por ML Kit Text Recognition" }}",
+                dateText = ocrResult.dateText,
+                placeOrAddress = ocrResult.placeOrAddress
             )
-            val resp = GeminiClient.api.generateContent(apiKey, req)
-            val rawText = resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
-            val cleanJson = rawText.replace("```json", "").replace("```", "").trim()
-            parseJsonToExpense(cleanJson, "Ticket OCR")
-        } catch (e: Exception) {
-            ParsedExpense(amount = 1250.0, merchant = "Walmart Supercenter", category = "Supermercado", note = "Escaneo de Ticket OCR")
+        } else {
+            ParsedExpense(
+                amount = 0.0,
+                merchant = "Ticket no detectado",
+                category = "General",
+                note = "No se detectó texto legible en la foto. Toma la foto con mejor claridad e iluminación.",
+                dateText = ocrResult.dateText,
+                placeOrAddress = "Sin ubicación"
+            )
         }
     }
 
@@ -314,33 +350,202 @@ class GeminiService {
             val regexMerchant = """"merchant"\s*:\s*"([^"]+)"""".toRegex()
             val regexCategory = """"category"\s*:\s*"([^"]+)"""".toRegex()
             val regexNote = """"note"\s*:\s*"([^"]+)"""".toRegex()
+            val regexDate = """"dateText"\s*:\s*"([^"]+)"""".toRegex()
+            val regexPlace = """"placeOrAddress"\s*:\s*"([^"]+)"""".toRegex()
 
             val amount = regexAmount.find(jsonString)?.groupValues?.get(1)?.toDoubleOrNull() ?: extractAmountFromString(rawInput)
             val merchant = regexMerchant.find(jsonString)?.groupValues?.get(1) ?: "Comercio Local"
             val category = regexCategory.find(jsonString)?.groupValues?.get(1) ?: "General"
             val note = regexNote.find(jsonString)?.groupValues?.get(1) ?: rawInput
+            val dateText = regexDate.find(jsonString)?.groupValues?.get(1) ?: ""
+            val placeOrAddress = regexPlace.find(jsonString)?.groupValues?.get(1) ?: ""
 
-            ParsedExpense(amount, merchant, category, note)
+            ParsedExpense(amount, merchant, category, note, dateText, placeOrAddress)
         } catch (e: Exception) {
             fallbackParseVoice(rawInput)
         }
     }
 
-    private fun fallbackParseVoice(input: String): ParsedExpense {
-        val amt = extractAmountFromString(input)
-        val cat = when {
-            input.contains("comida", true) || input.contains("restaurante", true) || input.contains("tacos", true) || input.contains("café", true) -> "Restaurantes"
-            input.contains("gasolina", true) || input.contains("gas", true) -> "Gasolina"
-            input.contains("super", true) || input.contains("despensa", true) || input.contains("walmart", true) -> "Supermercado"
-            input.contains("netflix", true) || input.contains("spotify", true) || input.contains("servicio", true) -> "Servicios"
+    private fun parseRealOcrText(text: String): ParsedExpense {
+        val lines = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        val textLower = text.lowercase()
+
+        // 1. Detect Merchant Name
+        val merchantName = when {
+            textLower.contains("oxxo") -> "OXXO"
+            textLower.contains("walmart") -> "Walmart"
+            textLower.contains("pemex") -> "Gasolinera Pemex"
+            textLower.contains("soriana") -> "Soriana"
+            textLower.contains("chedraui") -> "Chedraui"
+            textLower.contains("starbucks") -> "Starbucks"
+            textLower.contains("costco") -> "Costco"
+            textLower.contains("sam's") || textLower.contains("sams") -> "Sam's Club"
+            textLower.contains("aurrera") -> "Bodega Aurrera"
+            textLower.contains("uber") -> "Uber"
+            textLower.contains("cfe") -> "CFE"
+            textLower.contains("telmex") -> "Telmex"
+            textLower.contains("shell") -> "Gasolinera Shell"
+            textLower.contains("bp") -> "Gasolinera BP"
+            else -> {
+                // Find top clean line without numbers/dates
+                val candidate = lines.take(5).firstOrNull { line ->
+                    val l = line.uppercase()
+                    !l.contains("TOTAL") && !l.contains("TICKET") && !l.contains("RFC") &&
+                            !l.contains("FOLIO") && !l.contains("FECHA") && !l.contains("SUCURSAL") &&
+                            !line.matches(""".*\d{2}[-/]\d{2}.*""".toRegex()) &&
+                            line.count { it.isDigit() } < 4 && line.length in 3..35
+                }
+                candidate?.replace("S.A. DE C.V.", "", ignoreCase = true)
+                    ?.replace("S DE RL DE CV", "", ignoreCase = true)
+                    ?.trim()
+                    ?: "Comercio Detectado"
+            }
+        }
+
+        // 2. Detect Total Amount
+        var detectedAmount = 0.0
+
+        // Look for explicit Total lines
+        val totalLines = lines.filter { line ->
+            val l = line.lowercase()
+            l.contains("total") || l.contains("importe") || l.contains("pagado") ||
+                    l.contains("gran total") || l.contains("monto") || l.contains("neto") ||
+                    l.contains("efectivo") || l.contains("tarjeta")
+        }
+
+        val numberRegex = """\$?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[\.,]\d{1,2})?|\d+[\.,]\d{1,2}|\d+)""".toRegex()
+
+        for (line in totalLines) {
+            val matches = numberRegex.findAll(line).toList()
+            for (match in matches) {
+                val numStr = match.groupValues[1].replace(" ", "").replace(",", ".")
+                // If numStr contains multiple dots like 1.250.00, handle it
+                val cleanNumStr = if (numStr.count { it == '.' } > 1) {
+                    val lastDot = numStr.lastIndexOf('.')
+                    numStr.substring(0, lastDot).replace(".", "") + numStr.substring(lastDot)
+                } else {
+                    numStr
+                }
+                val value = cleanNumStr.toDoubleOrNull() ?: 0.0
+                if (value in 1.0..99999.0) {
+                    detectedAmount = value
+                    break
+                }
+            }
+            if (detectedAmount > 0.0) break
+        }
+
+        // If no amount found in Total lines, search across all lines for max dollar amount
+        if (detectedAmount == 0.0) {
+            val allMatches = numberRegex.findAll(text).mapNotNull { match ->
+                val numStr = match.groupValues[1].replace(" ", "").replace(",", ".")
+                val cleanNumStr = if (numStr.count { it == '.' } > 1) {
+                    val lastDot = numStr.lastIndexOf('.')
+                    numStr.substring(0, lastDot).replace(".", "") + numStr.substring(lastDot)
+                } else {
+                    numStr
+                }
+                cleanNumStr.toDoubleOrNull()
+            }.filter { it in 1.0..99999.0 }.toList()
+
+            detectedAmount = allMatches.maxOrNull() ?: 0.0
+        }
+
+        // 3. Category Determination
+        val category = when {
+            textLower.contains("gasolina") || textLower.contains("pemex") || textLower.contains("litros") || textLower.contains("magna") || textLower.contains("premium") || textLower.contains("shell") -> "Gasolina"
+            textLower.contains("walmart") || textLower.contains("oxxo") || textLower.contains("soriana") || textLower.contains("chedraui") || textLower.contains("despensa") || textLower.contains("super") || textLower.contains("aurrera") -> "Supermercado"
+            textLower.contains("restaurante") || textLower.contains("starbucks") || textLower.contains("cafe") || textLower.contains("tacos") || textLower.contains("comida") || textLower.contains("burger") -> "Restaurantes"
+            textLower.contains("cfe") || textLower.contains("telmex") || textLower.contains("agua") || textLower.contains("luz") || textLower.contains("izzi") -> "Servicios"
             else -> "General"
         }
+
+        val noteText = if (lines.size > 2) {
+            "OCR: ${lines.take(3).joinToString(" | ")}"
+        } else {
+            "Lectura OCR realizada"
+        }
+
         return ParsedExpense(
-            amount = if (amt > 0) amt else 250.0,
-            merchant = if (input.length > 5) input.take(20) else "Gasto Frecuente",
-            category = cat,
-            note = input
+            amount = detectedAmount,
+            merchant = merchantName,
+            category = category,
+            note = noteText
         )
+    }
+
+    private fun fallbackParseVoice(input: String): ParsedExpense {
+        val lower = input.lowercase()
+
+        val merchantRegex = """(?i)(?:en|de|para)\s+([a-záéíóúñ0-9\s]{3,20})(?=\s+(?:por|de|en|para|\$|\d|pesos)|$)""".toRegex()
+        val merchantMatch = merchantRegex.find(input)?.groupValues?.get(1)?.trim()
+        val merchantName = when {
+            !merchantMatch.isNullOrBlank() -> merchantMatch.replace("pesos", "").replace("gasté", "").trim().capitalizeWords()
+            lower.contains("pemex") -> "Pemex"
+            lower.contains("oxxo") -> "Oxxo"
+            lower.contains("walmart") -> "Walmart"
+            lower.contains("starbucks") -> "Starbucks"
+            lower.contains("uber") -> "Uber"
+            lower.contains("amazon") -> "Amazon"
+            else -> "Gasto por Voz"
+        }
+
+        var amt = extractAmountFromString(input)
+        if (amt <= 0.0) {
+            amt = parseSpanishNumberWords(lower)
+        }
+
+        val cat = when {
+            lower.contains("gasolina") || lower.contains("gas") || lower.contains("litros") || lower.contains("pemex") -> "Gasolina"
+            lower.contains("comida") || lower.contains("restaurante") || lower.contains("tacos") || lower.contains("café") || lower.contains("cenar") -> "Restaurantes"
+            lower.contains("super") || lower.contains("despensa") || lower.contains("walmart") || lower.contains("oxxo") || lower.contains("soriana") -> "Supermercado"
+            lower.contains("luz") || lower.contains("agua") || lower.contains("internet") || lower.contains("netflix") || lower.contains("spotify") -> "Servicios"
+            lower.contains("medicina") || lower.contains("farmacia") || lower.contains("doctor") -> "Salud"
+            else -> "General"
+        }
+
+        return ParsedExpense(
+            amount = if (amt > 0) amt else 100.0,
+            merchant = merchantName,
+            category = cat,
+            note = "Dictado de Voz: \"$input\""
+        )
+    }
+
+    private fun parseSpanishNumberWords(text: String): Double {
+        var total = 0.0
+        if (text.contains("mil")) total += 1000.0
+        if (text.contains("quinientos") || text.contains("quinientas")) total += 500.0
+        else if (text.contains("cuatrocientos")) total += 400.0
+        else if (text.contains("trescientos")) total += 300.0
+        else if (text.contains("doscientos")) total += 200.0
+        else if (text.contains("cien") || text.contains("ciento")) total += 100.0
+
+        if (text.contains("noventa")) total += 90.0
+        else if (text.contains("ochenta")) total += 80.0
+        else if (text.contains("setenta")) total += 70.0
+        else if (text.contains("sesenta")) total += 60.0
+        else if (text.contains("cincuenta")) total += 50.0
+        else if (text.contains("cuarenta")) total += 40.0
+        else if (text.contains("treinta")) total += 30.0
+        else if (text.contains("veinte")) total += 20.0
+        else if (text.contains("diez")) total += 10.0
+
+        if (text.contains("nueve")) total += 9.0
+        else if (text.contains("ocho")) total += 8.0
+        else if (text.contains("siete")) total += 7.0
+        else if (text.contains("seis")) total += 6.0
+        else if (text.contains("cinco")) total += 5.0
+        else if (text.contains("cuatro")) total += 4.0
+        else if (text.contains("tres")) total += 3.0
+        else if (text.contains("dos")) total += 2.0
+        else if (text.contains("uno") || text.contains("un ")) total += 1.0
+
+        return total
+    }
+
+    private fun String.capitalizeWords(): String {
+        return split(" ").map { word -> word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() } }.joinToString(" ")
     }
 
     private fun extractAmountFromString(text: String): Double {
@@ -354,7 +559,9 @@ data class ParsedExpense(
     val amount: Double,
     val merchant: String,
     val category: String,
-    val note: String
+    val note: String,
+    val dateText: String = "",
+    val placeOrAddress: String = ""
 )
 
 data class ParsedStatementResult(

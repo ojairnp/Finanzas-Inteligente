@@ -93,8 +93,10 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
+  implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
   implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)

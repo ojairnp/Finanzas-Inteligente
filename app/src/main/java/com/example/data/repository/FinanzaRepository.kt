@@ -142,7 +142,37 @@ class FinanzaRepository(
     suspend fun addAssetLiability(item: AssetLiabilityEntity) = dao.insertAssetLiability(item)
     suspend fun deleteAssetLiability(item: AssetLiabilityEntity) = dao.deleteAssetLiability(item)
 
-    // Backup & Restore via Google Drive & Sheets
+    suspend fun clearAllSampleData() {
+        dao.clearExpenses()
+        dao.clearSavingsGoals()
+        dao.clearCreditCards()
+        dao.clearStockPositions()
+        dao.clearSoldStocks()
+        dao.clearStatementImports()
+        dao.clearAssetsLiabilities()
+        dao.clearAccountTransfers()
+    }
+
+    // Backup & Restore via Google Drive & Sheets & Local CSV/JSON
+    suspend fun performLocalBackupFiles(context: android.content.Context, userEmail: String): com.example.data.remote.LocalBackupResult {
+        val currentExpenses = dao.getAllExpenses().first()
+        val currentGoals = dao.getAllSavingsGoals().first()
+        val currentCards = dao.getAllCreditCards().first()
+        val currentStocks = dao.getAllStockPositions().first()
+        val currentAssets = dao.getAllAssetsLiabilities().first()
+
+        val payload = BackupPayload(
+            userEmail = userEmail,
+            expenses = currentExpenses,
+            savingsGoals = currentGoals,
+            creditCards = currentCards,
+            stockPositions = currentStocks,
+            assetsLiabilities = currentAssets
+        )
+
+        return googleDriveSheetsService.saveLocalBackupFiles(context, payload)
+    }
+
     suspend fun performGoogleBackup(userEmail: String): BackupResult {
         val currentExpenses = dao.getAllExpenses().first()
         val currentGoals = dao.getAllSavingsGoals().first()
@@ -164,7 +194,15 @@ class FinanzaRepository(
 
     suspend fun restoreFromBackupPayload(jsonString: String): Boolean {
         val payload = googleDriveSheetsService.parseJsonBackup(jsonString) ?: return false
+        return restoreFromPayloadObject(payload)
+    }
 
+    suspend fun restoreFromCsvBackupPayload(csvString: String): Boolean {
+        val payload = googleDriveSheetsService.parseCsvBackup(csvString)
+        return restoreFromPayloadObject(payload)
+    }
+
+    private suspend fun restoreFromPayloadObject(payload: BackupPayload): Boolean {
         if (payload.expenses.isNotEmpty()) {
             dao.clearExpenses()
             dao.insertAllExpenses(payload.expenses)

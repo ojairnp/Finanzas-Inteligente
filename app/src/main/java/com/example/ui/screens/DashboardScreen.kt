@@ -72,7 +72,8 @@ fun DashboardScreen(
     aiTip: String,
     isAiLoading: Boolean,
     onNavigateTo: (com.example.ui.viewmodel.AppScreen) -> Unit,
-    onRefreshTip: () -> Unit
+    onRefreshTip: () -> Unit,
+    onClearSampleData: () -> Unit = {}
 ) {
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale("es", "MX"))
 
@@ -240,6 +241,47 @@ fun DashboardScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Quick Real Mode Banner
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onClearSampleData() },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = SapphireSecondary.copy(alpha = 0.12f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = SapphireSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text("¿Listo para tu prueba real?", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = SapphireSecondary)
+                            Text("Toca para limpiar datos de prueba y empezar de cero con montos reales.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    Button(
+                        onClick = onClearSampleData,
+                        colors = ButtonDefaults.buttonColors(containerColor = SapphireSecondary),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("clean_sample_data_dash_btn")
+                    ) {
+                        Text("Limpiar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

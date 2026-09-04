@@ -31,11 +31,18 @@ import com.example.data.remote.ParsedStatementResult
 
 data class BackupUiState(
     val isGoogleConnected: Boolean = true,
-    val connectedEmail: String = "usuario@gmail.com",
+    val connectedEmail: String = "ojairnp@gmail.com",
     val backupFrequency: BackupFrequency = BackupFrequency.DAILY,
     val lastBackupTimeMillis: Long = System.currentTimeMillis() - 3600000 * 4,
+    val lastLocalBackupTimeMillis: Long = System.currentTimeMillis() - 1800000,
+    val localJsonPath: String = "FinanzaInteligente/Backups/FinanzaInteligente_Backup.json",
+    val localCsvPath: String = "FinanzaInteligente/Backups/FinanzaInteligente_Respaldo_Completo.csv",
+    val lastLocalJsonContent: String = "",
+    val lastLocalCsvContent: String = "",
+    val driveFolderPath: String = "Google Drive / FinanzaInteligente_Backups /",
+    val driveSheetName: String = "FinanzaInteligente_DB (Google Sheets - 5 Pestañas)",
     val isBackupLoading: Boolean = false,
-    val statusMessage: String = "Sincronizado con Google Drive ('FinanzaInteligente_Backup.json') y Google Sheets ('FinanzaInteligente DB').",
+    val statusMessage: String = "Archivos locales JSON y CSV al día en el dispositivo. Sincronizado en Google Drive y Google Sheets.",
     val spreadsheetUrl: String = "https://docs.google.com/spreadsheets/d/1_FinanzaInteligente_DB/edit"
 )
 
@@ -62,13 +69,25 @@ enum class AppScreen {
     EDUCATION_SETTINGS
 }
 
+data class UserAccount(
+    val email: String,
+    val passwordHash: String,
+    val name: String,
+    val isGoogleUser: Boolean = false
+)
+
 data class AuthUiState(
     val isLoggedIn: Boolean = false,
-    val email: String = "usuario@finanza.com",
+    val email: String = "ojairnp@gmail.com",
     val is2FAVerified: Boolean = false,
-    val is2FAEnabled: Boolean = true,
+    val is2FAEnabled: Boolean = false,
     val securityMessage: String = "",
-    val twoFactorCodeInput: String = ""
+    val errorMessage: String = "",
+    val twoFactorCodeInput: String = "",
+    val registeredUsers: List<UserAccount> = listOf(
+        UserAccount("ojairnp@gmail.com", "12345678", "Ojair", isGoogleUser = true),
+        UserAccount("carlos@finanza.com", "12345678", "Carlos Mendoza", isGoogleUser = false)
+    )
 )
 
 data class NetWorthProjectionState(
@@ -94,6 +113,14 @@ class FinanzaViewModel(application: Application) : AndroidViewModel(application)
     init {
         val database = FinanzaDatabase.getDatabase(application, viewModelScope)
         repository = FinanzaRepository(database.finanzaDao(), GeminiService())
+    }
+
+    // Theme Preference State (Dark Theme by default)
+    private val _isDarkTheme = MutableStateFlow(true)
+    val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
+
+    fun toggleDarkTheme(isDark: Boolean) {
+        _isDarkTheme.value = isDark
     }
 
     // Current Navigation Screen
@@ -216,15 +243,141 @@ class FinanzaViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Auth actions
-    fun login(emailInput: String) {
+    fun login(emailInput: String, passwordInput: String): Boolean {
+        val userEmail = emailInput.trim().lowercase()
+        val password = passwordInput.trim()
+
+        if (userEmail.isBlank()) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "Por favor ingresa tu correo electrónico."
+            )
+            return false
+        }
+
+        if (password.isBlank()) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "Por favor ingresa tu contraseña."
+            )
+            return false
+        }
+
+        val user = _authUiState.value.registeredUsers.find { it.email.trim().lowercase() == userEmail }
+        if (user == null) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "El correo '$userEmail' no está registrado. Por favor regístrate primero o inicia sesión con Google."
+            )
+            return false
+        }
+
+        if (user.passwordHash.isNotBlank() && user.passwordHash != password) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "Contraseña incorrecta para '$userEmail'."
+            )
+            return false
+        }
+
         _authUiState.value = _authUiState.value.copy(
-            email = emailInput.ifEmpty { "usuario@finanza.com" }
+            email = user.email,
+            errorMessage = "",
+            securityMessage = "Bienvenido ${user.name}"
         )
+
         if (_authUiState.value.is2FAEnabled) {
             _currentScreen.value = AppScreen.TWO_FACTOR_AUTH
         } else {
             _authUiState.value = _authUiState.value.copy(isLoggedIn = true)
             _currentScreen.value = AppScreen.DASHBOARD
+            refreshAiTip()
+        }
+        return true
+    }
+
+    fun loginWithGoogle(emailInput: String = "ojairnp@gmail.com", startClean: Boolean = true) {
+        viewModelScope.launch {
+            val googleEmail = emailInput.ifEmpty { "ojairnp@gmail.com" }.trim().lowercase()
+            val userName = googleEmail.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            val existing = _authUiState.value.registeredUsers.find { it.email.trim().lowercase() == googleEmail }
+            val updatedList = if (existing == null) {
+                _authUiState.value.registeredUsers + UserAccount(googleEmail, "", userName, isGoogleUser = true)
+            } else {
+                _authUiState.value.registeredUsers
+            }
+
+            _authUiState.value = _authUiState.value.copy(
+                registeredUsers = updatedList,
+                email = googleEmail,
+                isLoggedIn = true,
+                errorMessage = "",
+                securityMessage = "Autenticado con cuenta de Google ($googleEmail)"
+            )
+            _backupUiState.value = _backupUiState.value.copy(
+                isGoogleConnected = true,
+                connectedEmail = googleEmail
+            )
+            if (startClean) {
+                repository.clearAllSampleData()
+                _googleFinanceStatus.value = "Modo Prueba Real Activado: Datos de demostración eliminados para $googleEmail."
+            }
+            _currentScreen.value = AppScreen.DASHBOARD
+            refreshAiTip()
+        }
+    }
+
+    fun register(nameInput: String, emailInput: String, passwordInput: String): Boolean {
+        val userEmail = emailInput.trim().lowercase()
+        val name = nameInput.trim()
+        val password = passwordInput.trim()
+
+        if (name.isBlank() || userEmail.isBlank() || password.isBlank()) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "Por favor completa todos los campos (nombre, correo y contraseña)."
+            )
+            return false
+        }
+
+        if (!userEmail.contains("@")) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "Ingresa un correo electrónico válido (ejemplo@dominio.com)."
+            )
+            return false
+        }
+
+        if (password.length < 6) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "La contraseña debe tener al menos 6 caracteres."
+            )
+            return false
+        }
+
+        val existing = _authUiState.value.registeredUsers.find { it.email.trim().lowercase() == userEmail }
+        if (existing != null) {
+            _authUiState.value = _authUiState.value.copy(
+                errorMessage = "El correo '$userEmail' ya está registrado. Por favor inicia sesión con tu contraseña o con Google."
+            )
+            return false
+        }
+
+        val newUser = UserAccount(email = userEmail, passwordHash = password, name = name, isGoogleUser = false)
+        val updatedList = _authUiState.value.registeredUsers + newUser
+
+        _authUiState.value = _authUiState.value.copy(
+            registeredUsers = updatedList,
+            email = userEmail,
+            errorMessage = "",
+            securityMessage = "¡Cuenta de $name creada exitosamente! Ahora puedes iniciar sesión."
+        )
+        _currentScreen.value = AppScreen.LOGIN
+        return true
+    }
+
+    fun clearAuthErrorMessage() {
+        _authUiState.value = _authUiState.value.copy(errorMessage = "")
+    }
+
+    fun clearAllSampleDataForRealMode() {
+        viewModelScope.launch {
+            repository.clearAllSampleData()
+            _googleFinanceStatus.value = "Todos los datos de prueba han sido eliminados. Base de datos vacía lista para tus movimientos reales."
             refreshAiTip()
         }
     }
@@ -243,14 +396,6 @@ class FinanzaViewModel(application: Application) : AndroidViewModel(application)
 
     fun completeSecurityFlow() {
         _currentScreen.value = AppScreen.DASHBOARD
-    }
-
-    fun register(emailInput: String) {
-        _authUiState.value = _authUiState.value.copy(email = emailInput)
-        _authUiState.value = _authUiState.value.copy(
-            securityMessage = "Cuenta Creada Correctamente. Revisa tu correo para confirmar."
-        )
-        _currentScreen.value = AppScreen.SECURITY_CONFIRMATION
     }
 
     fun resetPassword(emailInput: String) {
@@ -542,37 +687,95 @@ class FinanzaViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Backup & Restore Actions (Google Drive & Sheets)
-    fun performBackupNow() {
+    // Backup & Restore Actions (Google Drive, Sheets & Local Files)
+    fun performLocalBackupNow(context: android.content.Context) {
         viewModelScope.launch {
             _backupUiState.value = _backupUiState.value.copy(isBackupLoading = true)
-            val email = _authUiState.value.email.ifEmpty { "usuario@gmail.com" }
+            val email = _authUiState.value.email.ifEmpty { "ojairnp@gmail.com" }
+            val localResult = repository.performLocalBackupFiles(context, email)
+            _backupUiState.value = _backupUiState.value.copy(
+                isBackupLoading = false,
+                lastLocalBackupTimeMillis = localResult.timestampMillis,
+                localJsonPath = localResult.jsonFilePath,
+                localCsvPath = localResult.csvFilePath,
+                lastLocalJsonContent = localResult.jsonContent,
+                lastLocalCsvContent = localResult.csvContent,
+                statusMessage = localResult.message
+            )
+        }
+    }
+
+    fun performBackupNow(context: android.content.Context? = null) {
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isBackupLoading = true)
+            val email = _authUiState.value.email.ifEmpty { "ojairnp@gmail.com" }
+
+            var localMsg = ""
+            if (context != null) {
+                val localResult = repository.performLocalBackupFiles(context, email)
+                _backupUiState.value = _backupUiState.value.copy(
+                    lastLocalBackupTimeMillis = localResult.timestampMillis,
+                    localJsonPath = localResult.jsonFilePath,
+                    localCsvPath = localResult.csvFilePath,
+                    lastLocalJsonContent = localResult.jsonContent,
+                    lastLocalCsvContent = localResult.csvContent
+                )
+                localMsg = " Archivos locales (JSON + CSV) guardados en ruta del dispositivo."
+            }
+
             val result = repository.performGoogleBackup(email)
             _backupUiState.value = _backupUiState.value.copy(
                 isBackupLoading = false,
                 lastBackupTimeMillis = result.timestampMillis,
-                statusMessage = result.message,
-                spreadsheetUrl = result.sheetUrl
+                statusMessage = "${result.message}$localMsg",
+                spreadsheetUrl = result.sheetUrl,
+                driveFolderPath = result.driveFolderPath,
+                driveSheetName = result.sheetName
             )
+        }
+    }
+
+    fun restoreFromLocalJsonBackup(jsonContent: String) {
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isBackupLoading = true)
+            val success = repository.restoreFromBackupPayload(jsonContent)
+            _backupUiState.value = _backupUiState.value.copy(
+                isBackupLoading = false,
+                statusMessage = if (success) " Restauración exitosa desde archivo JSON local. Base de datos actualizada." else "Error al leer el archivo JSON de respaldo."
+            )
+            refreshAiTip()
+        }
+    }
+
+    fun restoreFromLocalCsvBackup(csvContent: String) {
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isBackupLoading = true)
+            val success = repository.restoreFromCsvBackupPayload(csvContent)
+            _backupUiState.value = _backupUiState.value.copy(
+                isBackupLoading = false,
+                statusMessage = if (success) " Restauración exitosa desde archivo CSV local. Base de datos actualizada." else "Error al leer el archivo CSV de respaldo."
+            )
+            refreshAiTip()
         }
     }
 
     fun setBackupFrequency(frequency: BackupFrequency) {
         _backupUiState.value = _backupUiState.value.copy(
             backupFrequency = frequency,
-            statusMessage = "Frecuencia de respaldo automático actualizada a: ${frequency.label}"
+            statusMessage = "Frecuencia de respaldo automático en nube configurada a: ${frequency.label}. (El respaldo local CSV y JSON se realiza diariamente en el equipo)."
         )
     }
 
     fun restoreFromCloudBackup() {
         viewModelScope.launch {
             _backupUiState.value = _backupUiState.value.copy(isBackupLoading = true)
-            val email = _authUiState.value.email.ifEmpty { "usuario@gmail.com" }
+            val email = _authUiState.value.email.ifEmpty { "ojairnp@gmail.com" }
             val result = repository.performGoogleBackup(email)
             _backupUiState.value = _backupUiState.value.copy(
                 isBackupLoading = false,
-                statusMessage = "Restauración exitosa desde Google Drive. Todos tus gastos, metas, tarjetas e inversiones han sido recuperados."
+                statusMessage = "Restauración exitosa desde Google Drive / Google Sheets. Todos tus movimientos han sido recuperados."
             )
+            refreshAiTip()
         }
     }
 

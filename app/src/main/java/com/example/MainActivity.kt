@@ -9,9 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.example.ui.navigation.MainAppContainer
 import com.example.ui.theme.FinanzaTheme
 import com.example.ui.viewmodel.FinanzaViewModel
+import com.example.worker.LocalBackupWorker
 
 class MainActivity : ComponentActivity() {
     private val viewModel: FinanzaViewModel by viewModels()
@@ -19,8 +22,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Inicializar programador de tareas en segundo plano (WorkManager) para respaldos locales diarios
+        LocalBackupWorker.scheduleDailyBackup(applicationContext)
+
         setContent {
-            FinanzaTheme {
+            val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+            FinanzaTheme(darkTheme = isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

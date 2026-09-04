@@ -1,19 +1,24 @@
 package com.example.ui.navigation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -22,6 +27,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +39,8 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -41,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -75,6 +84,7 @@ import kotlinx.coroutines.launch
 fun MainAppContainer(viewModel: FinanzaViewModel) {
     val currentScreen by viewModel.currentScreen.collectAsState()
     val authUiState by viewModel.authUiState.collectAsState()
+    val isDarkTheme by viewModel.isDarkTheme.collectAsState()
 
     val expenses by viewModel.expenses.collectAsState()
     val savingsGoals by viewModel.savingsGoals.collectAsState()
@@ -107,16 +117,30 @@ fun MainAppContainer(viewModel: FinanzaViewModel) {
     when (currentScreen) {
         AppScreen.LOGIN -> {
             LoginScreen(
-                onLoginClick = { email -> viewModel.login(email) },
-                onRegisterNav = { viewModel.navigateTo(AppScreen.REGISTER) },
-                onForgotPasswordNav = { viewModel.navigateTo(AppScreen.FORGOT_PASSWORD) }
+                errorMessage = authUiState.errorMessage,
+                securityMessage = authUiState.securityMessage,
+                onLoginClick = { email, password -> viewModel.login(email, password) },
+                onGoogleLoginClick = { email, startClean -> viewModel.loginWithGoogle(email, startClean) },
+                onRegisterNav = {
+                    viewModel.clearAuthErrorMessage()
+                    viewModel.navigateTo(AppScreen.REGISTER)
+                },
+                onForgotPasswordNav = {
+                    viewModel.clearAuthErrorMessage()
+                    viewModel.navigateTo(AppScreen.FORGOT_PASSWORD)
+                }
             )
             return
         }
         AppScreen.REGISTER -> {
             RegisterScreen(
-                onRegisterSubmit = { email -> viewModel.register(email) },
-                onBackToLogin = { viewModel.navigateTo(AppScreen.LOGIN) }
+                errorMessage = authUiState.errorMessage,
+                onRegisterSubmit = { name, email, password -> viewModel.register(name, email, password) },
+                onGoogleRegisterClick = { email, startClean -> viewModel.loginWithGoogle(email, startClean) },
+                onBackToLogin = {
+                    viewModel.clearAuthErrorMessage()
+                    viewModel.navigateTo(AppScreen.LOGIN)
+                }
             )
             return
         }
@@ -269,6 +293,44 @@ fun MainAppContainer(viewModel: FinanzaViewModel) {
                         },
                         icon = { Icon(Icons.Default.Settings, contentDescription = null) }
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                contentDescription = null,
+                                tint = if (isDarkTheme) SapphireSecondary else EmeraldPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = if (isDarkTheme) "Modo Oscuro" else "Modo Claro",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+
+                        Switch(
+                            checked = isDarkTheme,
+                            onCheckedChange = { viewModel.toggleDarkTheme(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = SapphireSecondary,
+                                checkedTrackColor = SapphireSecondary.copy(alpha = 0.5f),
+                                uncheckedThumbColor = EmeraldPrimary,
+                                uncheckedTrackColor = EmeraldPrimary.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.testTag("drawer_theme_toggle_switch")
+                        )
+                    }
                 }
             }
         }
@@ -303,6 +365,18 @@ fun MainAppContainer(viewModel: FinanzaViewModel) {
                             modifier = Modifier.testTag("open_drawer_button")
                         ) {
                             Icon(Icons.Default.Menu, contentDescription = "Menú")
+                        }
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = { viewModel.toggleDarkTheme(!isDarkTheme) },
+                            modifier = Modifier.testTag("top_bar_theme_toggle")
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (isDarkTheme) "Cambiar a Modo Claro" else "Cambiar a Modo Oscuro",
+                                tint = if (isDarkTheme) Color(0xFFFBBF24) else EmeraldPrimary
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -370,12 +444,14 @@ fun MainAppContainer(viewModel: FinanzaViewModel) {
                         aiTip = aiTip,
                         isAiLoading = isAiLoading,
                         onNavigateTo = { screen -> viewModel.navigateTo(screen) },
-                        onRefreshTip = { viewModel.refreshAiTip() }
+                        onRefreshTip = { viewModel.refreshAiTip() },
+                        onClearSampleData = { viewModel.clearAllSampleDataForRealMode() }
                     )
 
                     AppScreen.EXPENSE_ENTRY -> ExpenseEntryScreen(
                         draftExpense = draftExpense,
                         isAiLoading = isAiLoading,
+                        allExpenses = expenses,
                         onVoiceDictate = { text -> viewModel.processVoiceDictation(text) },
                         onOcrScan = { bitmap -> viewModel.processTicketOcr(bitmap) },
                         onSaveExpense = { amt, cat, merchant, note, type ->
@@ -474,10 +550,16 @@ fun MainAppContainer(viewModel: FinanzaViewModel) {
                         userEmail = authUiState.email,
                         is2FAEnabled = authUiState.is2FAEnabled,
                         backupUiState = backupUiState,
+                        isDarkTheme = isDarkTheme,
+                        onToggleDarkTheme = { isDark -> viewModel.toggleDarkTheme(isDark) },
                         onToggle2FA = { enabled -> viewModel.toggle2FA(enabled) },
-                        onPerformBackupNow = { viewModel.performBackupNow() },
+                        onPerformBackupNow = { ctx -> viewModel.performBackupNow(ctx) },
+                        onPerformLocalBackupOnly = { ctx -> viewModel.performLocalBackupNow(ctx) },
                         onSetBackupFrequency = { freq -> viewModel.setBackupFrequency(freq) },
                         onRestoreFromBackup = { viewModel.restoreFromCloudBackup() },
+                        onRestoreFromLocalJson = { json -> viewModel.restoreFromLocalJsonBackup(json) },
+                        onRestoreFromLocalCsv = { csv -> viewModel.restoreFromLocalCsvBackup(csv) },
+                        onClearSampleData = { viewModel.clearAllSampleDataForRealMode() },
                         onLogout = { viewModel.navigateTo(AppScreen.LOGIN) }
                     )
 

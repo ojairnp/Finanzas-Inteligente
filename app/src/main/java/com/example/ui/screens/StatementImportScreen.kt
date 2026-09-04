@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +33,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Difference
 import androidx.compose.material.icons.filled.FileDownloadDone
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -40,6 +47,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -75,11 +84,33 @@ fun StatementImportScreen(
     onClearResult: () -> Unit = {},
     onBack: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "US"))
     var selectedInstitution by remember { mutableStateOf("GBM+ Casa de Bolsa") }
     var inputMode by remember { mutableStateOf("archivo") } // "archivo" or "texto"
     var pasteText by remember { mutableStateOf("") }
     var currentFileName by remember { mutableStateOf("Estado_Cuenta_GBM_Junio2026.pdf") }
+
+    // System File Picker Launcher
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val fileName = getFileNameFromUri(context, uri) ?: "Estado_Cuenta_Importado.pdf"
+            currentFileName = fileName
+            val mimeType = context.contentResolver.getType(uri) ?: "*/*"
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                inputStream?.close()
+
+                Toast.makeText(context, "Archivo cargado: $fileName", Toast.LENGTH_SHORT).show()
+                onParseDocument(fileName, bytes, mimeType, "")
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error al leer archivo: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     val institutions = listOf(
         "GBM+ Casa de Bolsa",
@@ -185,8 +216,21 @@ fun StatementImportScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Preset upload sample options
-                    Text("Formatos Compatibles:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Real System File Picker Button
+                    Button(
+                        onClick = { documentPickerLauncher.launch("*/*") },
+                        colors = ButtonDefaults.buttonColors(containerColor = SapphireSecondary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("select_file_system_btn")
+                    ) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("📁 Seleccionar Archivo de tu Dispositivo (PDF / Excel / Foto)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text("O selecciona una muestra predeterminada:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -442,4 +486,27 @@ fun StatementImportScreen(
             }
         }
     }
+}
+
+fun getFileNameFromUri(context: Context, uri: Uri): String? {
+    var result: String? = null
+    if (uri.scheme == "content") {
+        val cursor = context.contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index != -1) {
+                    result = it.getString(index)
+                }
+            }
+        }
+    }
+    if (result == null) {
+        result = uri.path
+        val cut = result?.lastIndexOf('/') ?: -1
+        if (cut != -1) {
+            result = result?.substring(cut + 1)
+        }
+    }
+    return result
 }

@@ -85,12 +85,18 @@ interface FinanzaDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSoldStock(soldStock: SoldStockEntity): Long
 
+    @Query("DELETE FROM sold_stock_positions")
+    suspend fun clearSoldStocks()
+
     // Statement Imports
     @Query("SELECT * FROM statement_imports ORDER BY importDateMillis DESC")
     fun getAllStatementImports(): Flow<List<StatementImportEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStatementImport(importItem: StatementImportEntity): Long
+
+    @Query("DELETE FROM statement_imports")
+    suspend fun clearStatementImports()
 
     // Assets & Liabilities
     @Query("SELECT * FROM asset_liabilities")
@@ -114,5 +120,8 @@ interface FinanzaDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccountTransfer(transfer: AccountTransferEntity): Long
+
+    @Query("DELETE FROM account_transfers")
+    suspend fun clearAccountTransfers()
 
 }
